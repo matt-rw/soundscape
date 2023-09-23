@@ -14,13 +14,13 @@ class MyImage:
         self.name = image_path.split('/')[-1].split('.')[0]
 
 class DraggablePixmapObject(QGraphicsObject):
-    def __init__(self, image_object, scaled_width, canvas_rect):
+    def __init__(self, image: MyImage):
         super().__init__()
-        self.image_object = image_object
-        self.canvas_rect = canvas_rect
-        self.pixmap = QPixmap(image_object.image_path)
+        self.image = image
+        self.pixmap = QPixmap(image.image_path).scaled(50, 50)
+
         self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, True)
-        self.setPos(QPointF(-scaled_width / 2, -scaled_width / 2))
+        self.setPos(QPointF(-self.pixmap.width() / 2, -self.pixmap.height() / 2))
         self.is_being_dragged = False
         self.offset = QPointF(0, 0)
 
@@ -36,35 +36,38 @@ class DraggablePixmapObject(QGraphicsObject):
             self.offset = self.pos() - event.scenePos()
 
     def mouseMoveEvent(self, event):
+        TOP = -250 + 18
+        BOTTOM = 200 - 18
+        LEFT = -400 + 13
+        RIGHT = 350 - 13
         if self.is_being_dragged:
             new_pos = event.scenePos() + self.offset
-            if self.canvas_rect.contains(new_pos):
+            if (LEFT <= new_pos.x() <= RIGHT) and (TOP <= new_pos.y() <= BOTTOM):
                 self.setPos(new_pos)
 
     def mouseReleaseEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_being_dragged = False
 
-class Sidebar(QListWidget):
+class Bottombar(QListWidget):
     addItemToCanvas = pyqtSignal(MyImage)
 
-    def __init__(self, sidebar_height):
+    def __init__(self):
         super().__init__()
         self.setIconSize(QSize(150, 150))
-        self.setMaximumHeight(sidebar_height)
+        self.setMaximumHeight(100)
 
-    def add_item(self, image_object):
-        sidebar_item = QListWidgetItem()
-        sidebar_item.setIcon(QIcon(image_object.image_path))
-        sidebar_item.setText(image_object.name)
-        sidebar_item.image_object = image_object  # Store the image object as an attribute
-        self.addItem(sidebar_item)
+    def add_item(self, image):
+        item = QListWidgetItem()
+        item.setIcon(QIcon(image.image_path))
+        item.setText(image.name)
+        item.image = image
+        self.addItem(item)
 
     def mouseDoubleClickEvent(self, event):
         item = self.itemAt(event.pos())
         if item is not None:
-            image_object = item.image_object
-            self.addItemToCanvas.emit(image_object)
+            self.addItemToCanvas.emit(item.image)
 
 class Canvas(QGraphicsView):
     def __init__(self):
@@ -73,35 +76,35 @@ class Canvas(QGraphicsView):
         self.setAcceptDrops(True)
         self.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-        self.setSceneRect(QRectF(-300, -200, 600, 400))  # Adjust as needed
+        rect = QRectF(-300, -200, 600, 400)
+        self.resize(600, 400)
+        self.setSceneRect(rect)
 
-    def addItemToCanvas(self, image_object):
-        scaled_width = 100
-        pixmap_item = DraggablePixmapObject(image_object, scaled_width, self.sceneRect())
+    def addItemToCanvas(self, image):
+        pixmap_item = DraggablePixmapObject(image)
         self.scene().addItem(pixmap_item)
 
 class GUI(QMainWindow):
     def __init__(self, objects):
         super().__init__()
         self.setWindowTitle("Soundscape")
-        self.setGeometry(100, 100, 800, 600)  # Adjust the window size as needed
+        #self.setGeometry(100, 100, 800, 600)
+        self.setFixedSize(800, 600)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
         canvas = Canvas()
-        sidebar_height = 200
-        sidebar = Sidebar(sidebar_height)
-
         layout.addWidget(canvas)
-        layout.addWidget(sidebar)
 
-        sidebar.addItemToCanvas.connect(canvas.addItemToCanvas)
+        bottombar = Bottombar()
+        layout.addWidget(bottombar)
 
-        for key in objects:
-            image_object = objects[key]
-            sidebar.add_item(image_object)
+        bottombar.addItemToCanvas.connect(canvas.addItemToCanvas)
+
+        for image in objects:
+            bottombar.add_item(objects[image])
 
 
 
