@@ -1,24 +1,37 @@
 import sys
+import os
+import logging
+import multiprocessing
 
 from PyQt6.QtCore import QPointF, QRectF, QSize, Qt, pyqtSignal
 from PyQt6.QtGui import QIcon, QPainter, QPixmap
 from PyQt6.QtWidgets import (QApplication, QGraphicsObject, QGraphicsScene,
                              QGraphicsView, QListWidget, QListWidgetItem,
                              QMainWindow, QPushButton, QVBoxLayout, QWidget)
+from pygame import mixer_music
 
+from mixer import MySound, MyMixer
+
+
+os.environ['QT_LOGGING_RULES'] = 'qt. *=false'
+
+
+TOP = -250 + 18
+BOTTOM = 200 - 18
+LEFT = -400 + 13
+RIGHT = 350 - 13
 
 class MyImage:
-    def __init__(self, image_id, image_path):
-        self.image_id = image_id
+    def __init__(self, image_path):
         self.image_path = image_path
         self.name = image_path.split('/')[-1].split('.')[0]
 
 class DraggablePixmapObject(QGraphicsObject):
-    def __init__(self, image: MyImage):
+    def __init__(self, image: MyImage, image_id: int):
         super().__init__()
-        self.image = image
+        self.id = image_id
+        self.name = image.name
         self.pixmap = QPixmap(image.image_path).scaled(50, 50)
-
         self.setFlag(QGraphicsObject.GraphicsItemFlag.ItemIsMovable, True)
         self.setPos(QPointF(-self.pixmap.width() / 2, -self.pixmap.height() / 2))
         self.is_being_dragged = False
@@ -36,10 +49,6 @@ class DraggablePixmapObject(QGraphicsObject):
             self.offset = self.pos() - event.scenePos()
 
     def mouseMoveEvent(self, event):
-        TOP = -250 + 18
-        BOTTOM = 200 - 18
-        LEFT = -400 + 13
-        RIGHT = 350 - 13
         if self.is_being_dragged:
             new_pos = event.scenePos() + self.offset
             if (LEFT <= new_pos.x() <= RIGHT) and (TOP <= new_pos.y() <= BOTTOM):
@@ -49,13 +58,16 @@ class DraggablePixmapObject(QGraphicsObject):
         if event.button() == Qt.MouseButton.LeftButton:
             self.is_being_dragged = False
 
+
 class Bottombar(QListWidget):
     addItemToCanvas = pyqtSignal(MyImage)
 
-    def __init__(self):
+    def __init__(self, images):
         super().__init__()
         self.setIconSize(QSize(150, 150))
         self.setMaximumHeight(100)
+        for image in images:
+            self.add_item(image)
 
     def add_item(self, image):
         item = QListWidgetItem()
@@ -70,7 +82,7 @@ class Bottombar(QListWidget):
             self.addItemToCanvas.emit(item.image)
 
 class Canvas(QGraphicsView):
-    def __init__(self):
+    def __init__(self, mixer):
         super().__init__()
         self.setScene(QGraphicsScene())
         self.setAcceptDrops(True)
@@ -80,42 +92,86 @@ class Canvas(QGraphicsView):
         self.resize(600, 400)
         self.setSceneRect(rect)
 
-    def addItemToCanvas(self, image):
-        pixmap_item = DraggablePixmapObject(image)
-        self.scene().addItem(pixmap_item)
+        # pass mixer to add channels
+        self.mixer = mixer
+
+    def addItemToCanvas(self, image: MyImage):
+        item = DraggablePixmapObject(image, 0)
+        self.scene().addItem(item)
+
+        # initialize sound object and add channel
+        name = item.name
+        mp3 = f'files/{name}/{name}.mp3'
+        location = item.x(), item.y()
+        interval = (5, 10)
+        sound = MySound(mp3, location, interval)
+        self.mixer.add_channel(sound)
 
 class GUI(QMainWindow):
     def __init__(self, objects):
         super().__init__()
         self.setWindowTitle("Soundscape")
-        #self.setGeometry(100, 100, 800, 600)
+        # dynamic sizing
+        # self.setGeometry(100, 100, 800, 600)
         self.setFixedSize(800, 600)
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
 
-        canvas = Canvas()
-        layout.addWidget(canvas)
+        self.playbutton = QPushButton()
+        self.playbutton.setIcon(QIcon('gui-images/play-32.png'))
+        self.playbutton.setIconSize(QSize(12,12))
+        self.playbutton.setMaximumSize(25,35)
+        self.playbutton.clicked.connect(self.toggle_play)
+        layout.addWidget(self.playbutton, alignment=Qt.AlignmentFlag.AlignRight)
+        self.playing = False
+        # run mixer
+        self.mixer = MyMixer()
 
-        bottombar = Bottombar()
-        layout.addWidget(bottombar)
+        self.canvas = Canvas(self.mixer)
+        layout.addWidget(self.canvas)
 
-        bottombar.addItemToCanvas.connect(canvas.addItemToCanvas)
+        self.bottombar = Bottombar(objects)
+        layout.addWidget(self.bottombar)
+        self.bottombar.addItemToCanvas.connect(self.canvas.addItemToCanvas)
 
-        for image in objects:
-            bottombar.add_item(objects[image])
 
+    def toggle_play(self):
+        self.playing = not self.playing
+        if self.playing:
+            self.playbutton.setIcon(QIcon('gui-images/pause-32.png'))
+            self.mixer.play()
+        else:
+            self.playbutton.setIcon(QIcon('gui-images/play-32.png'))
+            self.mixer.pause()
+
+
+    def mixer_init(self, event_play, event_pause):
+        while True:
+            event_play.wait()
+            event_play.clear()
+
+            if event_pause.is_set():
+                event_pause.clear()
+                continue
+
+
+    def remove_channel(self, item: DraggablePixmapObject):
+        pass
 
 
 if __name__ == "__main__":
     # Example objects
-    objects = {
-        "armadillo": MyImage(1, "files/armadillo/armadillo.png"),
-        "thunder": MyImage(2, "files/thunder/thunder.png"),
-    }
+    images = []
+    path = 'files'
+    for img in os.listdir(path):
+        if img != '.DS_Store':
+            image_file = f'{path}/{img}/{img}.png'
+            image = MyImage(image_file)
+            images.append(image)
 
     app = QApplication(sys.argv)
-    gui = GUI(objects)
+    gui = GUI(images)
     gui.show()
     sys.exit(app.exec())
